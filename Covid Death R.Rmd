@@ -1,0 +1,379 @@
+---
+title: "Capstone DV"
+author: "Elbert H. Nugroho"
+date: "9/5/2020"
+output: html_document
+---
+
+# Covid Case and Death Visualization by Elbert H. Nugroho
+## Data Source: Our World in Data
+#### URL Link: https://ourworldindata.org/coronavirus-source-data
+####Disclaimer: This dashboard was made for R Data Visualization Exercise. The creator of this dashboard was not educated in Epidmiology science, therefore this data visualization maybe flawed and cannot be used for any Epidemiological purposes. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Library Loading 
+```{r}
+library(gridExtra)
+library(patchwork)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(scales)
+library(lubridate)
+library(shiny)
+library(shinydashboard)
+library(glue)
+library(flexdashboard)
+library(RColorBrewer)
+display.brewer.all()
+```
+
+
+#Data Pre-Processing
+```{r}
+death <- read.csv("DATA/COVID DEATH.csv")
+death
+```
+
+Preliminary Data Checking
+```{r}
+glimpse(death)
+```
+
+Drop Column:
+- biweekly_cases
+- biweekly_death
+
+Data Type Transformation:
+- date
+-location
+
+```{r}
+death <- death %>% 
+  
+  
+  #drop column
+  select(-biweekly_cases, -biweekly_deaths) %>% 
+  #data transformation
+  mutate(location = factor(location), date= ymd(date))
+death
+```
+
+Checking data structure with glimpse
+
+```{r}
+glimpse(death)
+```
+
+```{r}
+table(death$location)
+```
+
+
+Filter data for the first day when a new case was recorded
+
+```{r}
+death_new <- death %>% 
+  filter(new_cases > 0)
+death_new
+```
+
+Monthly data aggregation from "death_new"
+
+```{r}
+death_new <- death_new %>% 
+  mutate( month = month(date, label = T, abbr = F))
+death_new
+```
+```{r}
+death_agg <- death_new %>% 
+  group_by(location, month) %>% 
+  summarise(
+    new_cases_monthly = sum(new_cases),
+    average_daily_case = mean(new_cases),
+    new_deaths_monthly = sum(new_deaths),
+    average_daily_deaths = mean(new_deaths),
+    total_cases_monthly = max(total_cases),
+    total_death_monthly = max(total_deaths),
+    mean_weekly_cases = mean(weekly_cases),
+    mean_weekly_deaths = mean(weekly_deaths),
+    case_fatality_rate_monthly = total_death_monthly / total_cases_monthly *100
+  ) %>% 
+  ungroup()
+  
+death_agg
+```
+
+
+Defining NA value as 0
+
+```{r}
+death_agg <- death_agg %>% 
+  mutate(mean_weekly_cases = ifelse(is.na(mean_weekly_cases),yes = 0, mean_weekly_cases),
+         mean_weekly_deaths = ifelse(is.na(mean_weekly_deaths), 0, mean_weekly_deaths)
+         
+  )
+
+```
+Checking for any NA value
+```{r}
+any(is.na(death_agg))
+```
+Checking Final data with glimpse()
+
+```{r}
+death_agg
+```
+
+```{r}
+glimpse(death_agg)
+```
+
+September Total Case and Death per Country and Filter country for cases above 1000
+
+```{r}
+death_agg_sept <- death_agg %>%
+          group_by(location) %>%
+  summarise(total_cases_by_september = max(total_cases_monthly), total_death_by_september = max(total_death_monthly)) %>% 
+  ungroup() %>% 
+  filter(total_cases_by_september > 1000)
+death_agg_sept
+```
+Fatality Rate in September
+
+```{r}
+death_fatality <- death_agg %>% 
+  filter(month == "September" , case_fatality_rate_monthly > 0) %>% 
+  select(location, case_fatality_rate_monthly) %>% 
+  arrange(case_fatality_rate_monthly)
+death_fatality
+```
+
+
+## Data Visualization
+Theme Algo
+
+```{r}
+theme_algo <- theme(
+  panel.background = element_rect(fill = "white"),
+  panel.grid.major = element_line(colour = "gray80"),
+  panel.grid.minor = element_blank(),
+  plot.title = element_text(family = "serif", 
+                            size = 18)
+)
+```
+ 
+Case per Month Trend Line 
+```{r}
+TL_CPM <- death_agg %>% 
+            filter(location %in% c("Indonesia", "Singapore", "Malaysia")) %>% 
+            ggplot(aes(month, total_cases_monthly, color = location, group = location,
+                       text = glue("Month : {month}
+                         Country : {location}
+                         Case : {number(total_cases_monthly, big.mark = ",", accuracy = 1)}"))) + 
+  scale_y_continuous(labels = number_format(big.mark = ","))+ 
+            geom_line() +
+            labs(title = "Monthly COVID-19 Case by Country",
+                 x = NULL,
+                 y = "Number of Cases",
+                 color = "Country"
+            ) + theme_algo
+  
+  
+ggplotly(TL_CPM, tooltip = "text") 
+```
+Death per Month Trend line 
+
+```{r}
+TL_DPM <- death_agg %>% 
+            filter(location %in% c("Indonesia", "Singapore", "United States")) %>% 
+            ggplot(aes(month, total_death_monthly, color = location, group = location,
+                       text = glue("Month : {month}
+                         Country : {location}
+                         Deaths : {number(total_death_monthly, big.mark = ",", accuracy = 1)}"))) + 
+  scale_y_continuous(labels = number_format(big.mark = ","))+ 
+            geom_line() +
+            labs(title = "Monthly COVID-19 Deaths by Country",
+                 x = NULL,
+                 y = "Number of Deaths",
+                 color = "Country"
+            ) + theme_algo
+
+ggplotly(TL_DPM, tooltip = "text")
+```
+
+Bar Graph for Cases and Death in September
+
+```{r}
+BG_CIS <- death_agg_sept %>% 
+            filter(location %in% c("Indonesia", "Singapore", "United States")) %>% 
+            ggplot(aes(location, total_cases_by_september, fill = location, group = location,
+                       text = glue("Country : {location}
+                         Cases : {number(total_cases_by_september, big.mark = ",", accuracy = 1)}"))) + 
+  scale_y_continuous(labels = number_format(big.mark = ","))+ 
+            geom_col() + 
+            labs(title = "September COVID-19 Cases by Country",
+                 x = NULL,
+                 y = "Number of Cases",
+                 color = "Country"
+            ) + theme_algo
+
+ggplotly(BG_CIS  + scale_fill_brewer(palette = "Reds"), tooltip = "text")
+```
+
+```{r}
+BG_DIS <- death_agg_sept %>% 
+            filter(location %in% c("Indonesia", "Singapore", "United States")) %>% 
+            ggplot(aes(location, total_death_by_september, color = location, group = location,
+                       text = glue("Country : {location}
+                         Deaths : {number(total_death_by_september, big.mark = ",", accuracy = 1)}"))) + 
+  scale_y_continuous(labels = number_format(big.mark = ","))+ 
+            geom_col() +
+            labs(title = "September COVID-19 Deaths by Country",
+                 x = NULL,
+                 y = "Number of Deaths",
+                 color = "Country"
+            ) + theme_algo
+
+ggplotly(BG_DIS, tooltip = "text")
+```
+Average Daily Cases and Deaths per Country per Month (May be utilized to see if treatments or government policy for social distancing is effective)
+
+```{r}
+TL_ACM <- death_agg %>% 
+            filter(location %in% c("Indonesia", "Singapore", "United States")) %>% 
+            ggplot(aes(month, average_daily_case, color = location, group = location,
+                       text = glue("Month : {month}
+                         Country : {location}
+                         Average Daily Case : {number(average_daily_case, big.mark = ",", accuracy = 1)}"))) + 
+  scale_y_continuous(labels = number_format(big.mark = ","))+ 
+            geom_line() +
+            labs(title = "COVID-19 Daily Case Average by Country",
+                 x = NULL,
+                 y = "Average Daily Case",
+                 color = "Country"
+            ) + theme_algo
+
+ggplotly(TL_ACM, tooltip = "text")
+```
+
+```{r}
+TL_ADM <- death_agg %>% 
+            filter(location %in% c("Indonesia", "Singapore", "United States")) %>% 
+            ggplot(aes(month, average_daily_deaths, color = location, group = location,
+                       text = glue("Month : {month}
+                         Country : {location}
+                         Average Daily Deaths : {number(average_daily_deaths, big.mark = ",", accuracy = 1)}"))) + 
+  scale_y_continuous(labels = number_format(big.mark = ","))+ 
+            geom_line() +
+            labs(title = "COVID-19 Daily Death Average by Country",
+                 x = NULL,
+                 y = "Average Daily Death",
+                 color = "Country"
+            ) + theme_algo
+
+ggplotly(TL_ADM, tooltip = "text")
+```
+Daily Case Trend
+```{r}
+TL_DC <- death_new %>% 
+            filter(location %in% c("Indonesia", "Singapore", "United States")) %>% 
+            ggplot(aes(date, total_cases, color = location, group = location,
+                       text = glue("Date : {date}
+                         Country : {location}
+                         Cases : {number(total_cases, big.mark = ",", accuracy = 1)}"))) + 
+ scale_y_continuous(labels = number_format(big.mark = ",")) +
+            scale_x_date(date_breaks = "1 month", labels = date_format(format = "%b"))+
+            geom_line() +
+            labs(title = "COVID-19 Daily Cases Trend by Country",
+                 x = NULL,
+                 y = "Number of Daily Cases",
+                 color = "Country"
+            ) + theme_algo
+
+ggplotly(TL_DC, tooltip = "text")
+```
+Daily Death Trend
+
+```{r}
+TL_DD <- death_new %>% 
+            filter(location %in% c("Indonesia", "Singapore", "United States")) %>% 
+            ggplot(aes(date, total_deaths, color = location, group = location,
+                       text = glue("Date : {date}
+                         Country : {location}
+                         Deaths : {number(total_deaths, big.mark = ",", accuracy = 1)}"))) + 
+ scale_y_continuous(labels = number_format(big.mark = ",")) +
+            scale_x_date(date_breaks = "1 month", labels = date_format(format = "%b"))+
+            geom_line() +
+            labs(title = "COVID-19 Daily Death Trend by Country",
+                 x = NULL,
+                 y = "Number of Daily Deaths",
+                 color = "Country"
+            ) + theme_algo
+
+ggplotly(TL_DD, tooltip = "text")
+```
+World Case Rate
+
+```{r}
+TL_WC <- death_new %>% 
+  filter(location == "World") %>%
+  ggplot(aes(date, total_cases, color = location, group = location,
+                       text = glue("Date : {date}
+                         Number of Cases : {number(total_cases, big.mark = ",", accuracy = 1)}"))) + 
+ scale_y_continuous(labels = number_format(big.mark = ",")) +
+            scale_x_date(date_breaks = "1 month", labels = date_format(format = "%b"))+
+            geom_line() +
+            labs(title = "COVID-19 Daily Case Trend",
+                 x = NULL,
+                 y = "Number of Daily Cases",
+                 color = "Country"
+            ) + theme_algo
+
+ggplotly(TL_WC, tooltip = "text")
+  
+```
+World Death Rate
+
+```{r}
+TL_WD <- death_new %>% 
+  filter(location == "World") %>%
+  ggplot(aes(date, total_deaths, color = location, group = location,
+                       text = glue("Date : {date}
+                         Number of Deaths : {number(total_deaths, big.mark = ",", accuracy = 1)}"))) + 
+ scale_y_continuous(labels = number_format(big.mark = ",")) +
+            scale_x_date(date_breaks = "1 month", labels = date_format(format = "%b"))+
+            geom_line() +
+            labs(title = "COVID-19 Daily Deaths Trend",
+                 x = NULL,
+                 y = "Number of Daily Deaths",
+                 color = "Country"
+            ) + theme_algo
+  
+
+ggplotly(TL_WD, tooltip = "text")
+```
+
+```{r}
+death_fatality
+```
+
+
+```{r}
+BG_CFR <- death_fatality %>% 
+            filter(location %in% c("Indonesia", "Singapore", "United States")) %>% 
+            ggplot(aes(case_fatality_rate_monthly, reorder(location, case_fatality_rate_monthly), fill = location, group = location,
+                       text = glue("Country : {location}
+                         Case Fatality Rate in Percentage : {case_fatality_rate_monthly}"))) + 
+            geom_col() +
+            labs(title = "Case Fatality Rate by Country",
+                 x = "Case Fatality Rate Percentage",
+                 y = "Location",
+                 color = "Country"
+            ) + theme_algo
+
+ggplotly(BG_CFR + scale_fill_brewer(palette = "OrRd"), tooltip = "text")
+```
+
